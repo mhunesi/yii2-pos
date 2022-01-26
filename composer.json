@@ -1,0 +1,24 @@
+{
+    "name": "mhunesi/yii2-pos",
+    "description": "Yii2 pos Gateway",
+    "type": "yii2-extension",
+    "keywords": ["yii2","extension","pos","sanalpos","pos"],
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Mustafa Hayri ÜNEŞİ",
+            "email": "mhunesi@gmail.com"
+        }
+    ],
+    "require": {
+        "php": ">=7.0.30",
+        "ext-dom": "*",
+        "ext-json": "*",
+        "yiisoft/yii2": "~2.0.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "mhunesi\\pos\\": "src"
+        }
+    }
+}
