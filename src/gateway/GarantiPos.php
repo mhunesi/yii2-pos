@@ -2,6 +2,7 @@
 
 namespace mhunesi\pos\gateway;
 
+use mhunesi\pos\models\card\CreditCardGarantiPos;
 use Yii;
 use GuzzleHttp\Client;
 use mhunesi\pos\enums\TxType;
@@ -22,6 +23,9 @@ class GarantiPos extends AbstractGateway
      */
     public const NAME = 'GarantiPay';
 
+    /**
+     * @var string
+     */
     public $creditCardClass = 'mhunesi\pos\models\card\CreditCardGarantiPos';
 
     /**
@@ -85,7 +89,7 @@ class GarantiPos extends AbstractGateway
     protected $card;
 
     /**
-     * @return GarantiPosAccount
+     * @return GarantiAccount
      */
     public function getAccount()
     {
@@ -264,10 +268,12 @@ class GarantiPos extends AbstractGateway
         $procReturnCode = '99';
         $transactionSecurity = 'MPI fallback';
 
-        if (in_array($raw3DAuthResponseData['mdstatus'], [1, 2, 3, 4])) {
-            if ($raw3DAuthResponseData['mdstatus'] == '1') {
+        $mdstatus = (int)$raw3DAuthResponseData['mdstatus'];
+
+        if (in_array($mdstatus, [1, 2, 3, 4])) {
+            if ($mdstatus === 1) {
                 $transactionSecurity = 'Full 3D Secure';
-            } elseif (in_array($raw3DAuthResponseData['mdstatus'], [2, 3, 4])) {
+            } elseif (in_array($mdstatus, [2, 3, 4])) {
                 $transactionSecurity = 'Half 3D Secure';
             }
 
@@ -718,11 +724,11 @@ class GarantiPos extends AbstractGateway
         }
 
         return (object)[
-            'id' => (string)$raw3DAuthResponseData['authcode'],
-            'order_id' => (string)$raw3DAuthResponseData['oid'],
-            'trans_id' => (string)$raw3DAuthResponseData['transid'],
-            'auth_code' => (string)$raw3DAuthResponseData['authcode'],
-            'host_ref_num' => (string)$raw3DAuthResponseData['hostrefnum'],
+            'id' => $raw3DAuthResponseData['authcode'] ?? '',
+            'order_id' => $raw3DAuthResponseData['oid'] ?? '',
+            'trans_id' => $raw3DAuthResponseData['transid'] ?? '',
+            'auth_code' => $raw3DAuthResponseData['authcode'] ?? '',
+            'host_ref_num' => $raw3DAuthResponseData['hostrefnum'] ?? '',
             'response' => $response,
             'transaction_type' => $this->type,
             'transaction' => $this->type,
@@ -733,16 +739,16 @@ class GarantiPos extends AbstractGateway
             'status' => $status,
             'status_detail' => isset($this->codes[$raw3DAuthResponseData['procreturncode']]) ? (string)$raw3DAuthResponseData['procreturncode'] : null,
             'hash' => (string)$raw3DAuthResponseData['secure3dhash'],
-            'rand' => (string)$raw3DAuthResponseData['rnd'],
-            'hash_params' => (string)$raw3DAuthResponseData['hashparams'],
-            'hash_params_val' => (string)$raw3DAuthResponseData['hashparamsval'],
-            'masked_number' => (string)$raw3DAuthResponseData['MaskedPan'],
+            'rand' => $raw3DAuthResponseData['rnd'] ?? '',
+            'hash_params' => $raw3DAuthResponseData['hashparams'] ?? '',
+            'hash_params_val' => $raw3DAuthResponseData['hashparamsval'] ?? '',
+            'masked_number' => $raw3DAuthResponseData['MaskedPan'] ?? '',
             'amount' => (string)$raw3DAuthResponseData['txnamount'],
             'currency' => (string)$raw3DAuthResponseData['txncurrencycode'],
-            'tx_status' => (string)$raw3DAuthResponseData['txnstatus'],
-            'eci' => (string)$raw3DAuthResponseData['eci'],
-            'cavv' => (string)$raw3DAuthResponseData['cavv'],
-            'xid' => (string)$raw3DAuthResponseData['xid'],
+            'tx_status' => $raw3DAuthResponseData['txnstatus'] ?? '',
+            'eci' => $raw3DAuthResponseData['eci'] ?? '',
+            'cavv' => $raw3DAuthResponseData['cavv'] ?? '',
+            'xid' => $raw3DAuthResponseData['xid'] ?? '',
             'error_code' => (string)isset($raw3DAuthResponseData['errcode']) ? $raw3DAuthResponseData['errcode'] : null,
             'error_message' => (string)$raw3DAuthResponseData['errmsg'],
             'md_error_message' => (string)$raw3DAuthResponseData['mderrormessage'],
