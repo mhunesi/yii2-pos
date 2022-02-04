@@ -107,7 +107,9 @@ abstract class AbstractGateway extends BaseObject implements PosInterface
                 break;
         }
 
-        $this->card = \Yii::createObject(array_merge(['class' => $this->creditCardClass],$card));
+        if($card){
+            $this->card = \Yii::createObject(array_merge(['class' => $this->creditCardClass],$card));
+        }
     }
 
     /**
@@ -279,7 +281,7 @@ abstract class AbstractGateway extends BaseObject implements PosInterface
     {
         $convertedData = XmlToArrayHelper::convert($data);
 
-        return (object)json_decode(json_encode($convertedData), false);
+        return (object)json_decode(json_encode($convertedData[array_key_first($convertedData)]), false);
     }
 
     /**

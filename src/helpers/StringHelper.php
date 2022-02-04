@@ -22,4 +22,10 @@ class StringHelper extends \yii\helpers\StringHelper
     {
         return $str !== strip_tags($str);
     }
+
+    public static function maskCreditCardNumber($number,$maskingCharacter = 'X')
+    {
+        $number = preg_replace('/\s+/', '', $number);
+        return substr($number, 0, 6) . str_repeat($maskingCharacter, strlen($number) - 6) . substr($number, -4);
+    }
 }

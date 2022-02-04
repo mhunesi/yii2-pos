@@ -2,11 +2,11 @@
 
 namespace mhunesi\pos\gateway;
 
-use mhunesi\pos\models\card\CreditCardGarantiPos;
-use Yii;
 use GuzzleHttp\Client;
 use mhunesi\pos\enums\TxType;
 use mhunesi\pos\models\account\GarantiAccount;
+use mhunesi\pos\models\card\CreditCardGarantiPos;
+use Yii;
 
 /**
  * Class GarantiPos
@@ -118,8 +118,8 @@ class GarantiPos extends AbstractGateway
     public function make3DPayment()
     {
         $request = Yii::$app->request;
-        //TODO hash check
-        if (in_array((int)$request->get('mdstatus'), [1, 2, 3, 4], true)) {
+
+        if ($this->check3DHash($request->post()) && in_array((int)$request->post('mdstatus'), [1, 2, 3, 4], true)) {
             $contents = $this->create3DPaymentXML($request->post());
             $this->send($contents);
         }
@@ -127,6 +127,40 @@ class GarantiPos extends AbstractGateway
         $this->response = $this->map3DPaymentData($request->post(), $this->data);
 
         return $this;
+    }
+
+    private function check3DHash($result)
+    {
+        $isValidHash = false;
+        $storeKey = $this->account->storeKey;
+
+        $responseHashparams = $result['hashparams'];
+        $responseHash = $result['hash'];
+
+        if ($responseHashparams !== null && $responseHashparams !== "") {
+            $digestData = "";
+            $paramList = explode(":", $responseHashparams);
+
+            foreach ($paramList as $param) {
+
+                $value = $result[strtolower($param)] ?? null;
+
+                if ($value === null) {
+                    $value = "";
+                }
+
+                $digestData .= $value;
+            }
+
+            $digestData .= $storeKey;
+            $hashCalculated = base64_encode(pack('H*', sha1($digestData)));
+
+            if ($responseHash === $hashCalculated) {
+                $isValidHash = true;
+            }
+        }
+
+        return $isValidHash;
     }
 
     /**
@@ -191,6 +225,9 @@ class GarantiPos extends AbstractGateway
         return $this->createXML($requestData);
     }
 
+    /**
+     * @return string
+     */
     public function getMode()
     {
         return strtoupper($this->env === 'dev' ? 'TEST' : 'PROD');
@@ -277,7 +314,7 @@ class GarantiPos extends AbstractGateway
                 $transactionSecurity = 'Half 3D Secure';
             }
 
-            if ($rawPaymentResponseData->Transaction->Response->ReasonCode === '00') {
+            if ($this->check3DHash($raw3DAuthResponseData) && $rawPaymentResponseData->Transaction->Response->ReasonCode === '00') {
                 $response = 'Approved';
                 $procReturnCode = $rawPaymentResponseData->Transaction->Response->ReasonCode;
                 $status = 'approved';
@@ -341,6 +378,16 @@ class GarantiPos extends AbstractGateway
     }
 
     /**
+     * Get ProcReturnCode
+     *
+     * @return string|null
+     */
+    protected function getProcReturnCode()
+    {
+        return isset($this->data->Transaction->Response->Code) ? (string)$this->data->Transaction->Response->Code : null;
+    }
+
+    /**
      * @inheritDoc
      */
     public function make3DPayPayment()
@@ -348,6 +395,66 @@ class GarantiPos extends AbstractGateway
         $this->response = $this->map3DPayResponseData(Yii::$app->request->post());
 
         return $this;
+    }
+
+    /**
+     * @inheritDoc
+     */
+    protected function map3DPayResponseData($raw3DAuthResponseData)
+    {
+        $status = 'declined';
+        $response = 'Declined';
+        $procReturnCode = $raw3DAuthResponseData['procreturncode'];
+
+        $transactionSecurity = 'MPI fallback';
+        if ($this->check3DHash($raw3DAuthResponseData) && in_array((int)$raw3DAuthResponseData['mdstatus'],
+                [1, 2, 3, 4],
+                true) && $raw3DAuthResponseData['response'] !== $response) {
+            if ((int)$raw3DAuthResponseData['mdstatus'] === '1') {
+                $transactionSecurity = 'Full 3D Secure';
+            } elseif (in_array($raw3DAuthResponseData['mdstatus'], [2, 3, 4])) {
+                $transactionSecurity = 'Half 3D Secure';
+            }
+
+            $status = 'approved';
+            $response = 'Approved';
+        }
+
+        return (object)[
+            'id' => $raw3DAuthResponseData['authcode'] ?? '',
+            'order_id' => $raw3DAuthResponseData['oid'] ?? '',
+            'trans_id' => $raw3DAuthResponseData['transid'] ?? '',
+            'auth_code' => $raw3DAuthResponseData['authcode'] ?? '',
+            'host_ref_num' => $raw3DAuthResponseData['hostrefnum'] ?? '',
+            'response' => $response,
+            'transaction_type' => $this->type,
+            'transaction' => $this->type,
+            'transaction_security' => $transactionSecurity,
+            'proc_return_code' => $procReturnCode,
+            'code' => $procReturnCode,
+            'md_status' => $raw3DAuthResponseData['mdstatus'],
+            'status' => $status,
+            'status_detail' => isset($this->codes[$raw3DAuthResponseData['procreturncode']]) ? (string)$raw3DAuthResponseData['procreturncode'] : null,
+            'hash' => (string)$raw3DAuthResponseData['secure3dhash'],
+            'rand' => $raw3DAuthResponseData['rnd'] ?? '',
+            'hash_params' => $raw3DAuthResponseData['hashparams'] ?? '',
+            'hash_params_val' => $raw3DAuthResponseData['hashparamsval'] ?? '',
+            'masked_number' => $raw3DAuthResponseData['MaskedPan'] ?? '',
+            'amount' => (string)$raw3DAuthResponseData['txnamount'],
+            'currency' => (string)$raw3DAuthResponseData['txncurrencycode'],
+            'tx_status' => $raw3DAuthResponseData['txnstatus'] ?? '',
+            'eci' => $raw3DAuthResponseData['eci'] ?? '',
+            'cavv' => $raw3DAuthResponseData['cavv'] ?? '',
+            'xid' => $raw3DAuthResponseData['xid'] ?? '',
+            'error_code' => (string)isset($raw3DAuthResponseData['errcode']) ? $raw3DAuthResponseData['errcode'] : null,
+            'error_message' => (string)$raw3DAuthResponseData['errmsg'],
+            'md_error_message' => (string)$raw3DAuthResponseData['mderrormessage'],
+            'campaign_url' => null,
+            //'name'                  => (string) $raw3DAuthResponseData['firmaadi'],
+            'email' => (string)$raw3DAuthResponseData['customeremailaddress'],
+            'extra' => $raw3DAuthResponseData['Extra'] ?? null,
+            'all' => $raw3DAuthResponseData,
+        ];
     }
 
     /**
@@ -404,6 +511,38 @@ class GarantiPos extends AbstractGateway
         ];
 
         return $this->createXML($requestData);
+    }
+
+    /**
+     * @inheritDoc
+     */
+    protected function mapHistoryResponse($rawResponseData)
+    {
+        $status = 'declined';
+        if ($this->getProcReturnCode() === '00') {
+            $status = 'approved';
+        }
+
+        return (object)[
+            'id' => isset($rawResponseData->Order->OrderHistInqResult->AuthCode) ? $this->printData($rawResponseData->Order->OrderHistInqResult->AuthCode) : null,
+            'order_id' => isset($rawResponseData->Order->OrderID) ? $this->printData($rawResponseData->Order->OrderID) : null,
+            'group_id' => isset($rawResponseData->Order->GroupID) ? $this->printData($rawResponseData->Order->GroupID) : null,
+            'trans_id' => isset($rawResponseData->Transaction->AuthCode) ? $this->printData($rawResponseData->Transaction->AuthCode) : null,
+            'response' => isset($rawResponseData->Transaction->Response->Message) ? $this->printData($rawResponseData->Transaction->Response->Message) : null,
+            'auth_code' => isset($rawResponseData->Order->OrderHistInqResult->AuthCode) ? $this->printData($rawResponseData->Order->OrderHistInqResult->AuthCode) : null,
+            'host_ref_num' => isset($rawResponseData->Order->OrderHistInqResult->RetrefNum) ? $this->printData($rawResponseData->Order->OrderHistInqResult->RetrefNum) : null,
+            'ret_ref_num' => isset($rawResponseData->Order->OrderHistInqResult->RetrefNum) ? $this->printData($rawResponseData->Order->OrderHistInqResult->RetrefNum) : null,
+            'hash_data' => isset($rawResponseData->Transaction->HashData) ? $this->printData($rawResponseData->Transaction->HashData) : null,
+            'proc_return_code' => $this->getProcReturnCode(),
+            'code' => $this->getProcReturnCode(),
+            'status' => $status,
+            'status_detail' => $this->getStatusDetail(),
+            'error_code' => isset($rawResponseData->Transaction->Response->Code) ? $this->printData($rawResponseData->Transaction->Response->Code) : null,
+            'error_message' => isset($rawResponseData->Transaction->Response->ErrorMsg) ? $this->printData($rawResponseData->Transaction->Response->ErrorMsg) : null,
+            'extra' => $rawResponseData->Extra ?? null,
+            'order_txn' => $rawResponseData->Order->OrderHistInqResult->OrderTxnList->OrderTxn ?? [],
+            'all' => $rawResponseData,
+        ];
     }
 
     /**
@@ -692,107 +831,6 @@ class GarantiPos extends AbstractGateway
     }
 
     /**
-     * Get ProcReturnCode
-     *
-     * @return string|null
-     */
-    protected function getProcReturnCode()
-    {
-        return isset($this->data->Transaction->Response->Code) ? (string)$this->data->Transaction->Response->Code : null;
-    }
-
-    /**
-     * @inheritDoc
-     */
-    protected function map3DPayResponseData($raw3DAuthResponseData)
-    {
-        $status = 'declined';
-        $response = 'Declined';
-        $procReturnCode = $raw3DAuthResponseData['procreturncode'];
-
-        $transactionSecurity = 'MPI fallback';
-        if (in_array((int)$raw3DAuthResponseData['mdstatus'], [1, 2, 3, 4],
-                true) && $raw3DAuthResponseData['response'] !== $response) {
-            if ((int)$raw3DAuthResponseData['mdstatus'] === '1') {
-                $transactionSecurity = 'Full 3D Secure';
-            } elseif (in_array($raw3DAuthResponseData['mdstatus'], [2, 3, 4])) {
-                $transactionSecurity = 'Half 3D Secure';
-            }
-
-            $status = 'approved';
-            $response = 'Approved';
-        }
-
-        return (object)[
-            'id' => $raw3DAuthResponseData['authcode'] ?? '',
-            'order_id' => $raw3DAuthResponseData['oid'] ?? '',
-            'trans_id' => $raw3DAuthResponseData['transid'] ?? '',
-            'auth_code' => $raw3DAuthResponseData['authcode'] ?? '',
-            'host_ref_num' => $raw3DAuthResponseData['hostrefnum'] ?? '',
-            'response' => $response,
-            'transaction_type' => $this->type,
-            'transaction' => $this->type,
-            'transaction_security' => $transactionSecurity,
-            'proc_return_code' => $procReturnCode,
-            'code' => $procReturnCode,
-            'md_status' => $raw3DAuthResponseData['mdstatus'],
-            'status' => $status,
-            'status_detail' => isset($this->codes[$raw3DAuthResponseData['procreturncode']]) ? (string)$raw3DAuthResponseData['procreturncode'] : null,
-            'hash' => (string)$raw3DAuthResponseData['secure3dhash'],
-            'rand' => $raw3DAuthResponseData['rnd'] ?? '',
-            'hash_params' => $raw3DAuthResponseData['hashparams'] ?? '',
-            'hash_params_val' => $raw3DAuthResponseData['hashparamsval'] ?? '',
-            'masked_number' => $raw3DAuthResponseData['MaskedPan'] ?? '',
-            'amount' => (string)$raw3DAuthResponseData['txnamount'],
-            'currency' => (string)$raw3DAuthResponseData['txncurrencycode'],
-            'tx_status' => $raw3DAuthResponseData['txnstatus'] ?? '',
-            'eci' => $raw3DAuthResponseData['eci'] ?? '',
-            'cavv' => $raw3DAuthResponseData['cavv'] ?? '',
-            'xid' => $raw3DAuthResponseData['xid'] ?? '',
-            'error_code' => (string)isset($raw3DAuthResponseData['errcode']) ? $raw3DAuthResponseData['errcode'] : null,
-            'error_message' => (string)$raw3DAuthResponseData['errmsg'],
-            'md_error_message' => (string)$raw3DAuthResponseData['mderrormessage'],
-            'campaign_url' => null,
-            //'name'                  => (string) $raw3DAuthResponseData['firmaadi'],
-            'email' => (string)$raw3DAuthResponseData['customeremailaddress'],
-            'extra' => $raw3DAuthResponseData['Extra'] ?? null,
-            'all' => $raw3DAuthResponseData,
-        ];
-    }
-
-    /**
-     * @inheritDoc
-     */
-    protected function mapHistoryResponse($rawResponseData)
-    {
-        $status = 'declined';
-        if ($this->getProcReturnCode() === '00') {
-            $status = 'approved';
-        }
-
-        return (object)[
-            'id' => isset($rawResponseData->Order->OrderHistInqResult->AuthCode) ? $this->printData($rawResponseData->Order->OrderHistInqResult->AuthCode) : null,
-            'order_id' => isset($rawResponseData->Order->OrderID) ? $this->printData($rawResponseData->Order->OrderID) : null,
-            'group_id' => isset($rawResponseData->Order->GroupID) ? $this->printData($rawResponseData->Order->GroupID) : null,
-            'trans_id' => isset($rawResponseData->Transaction->AuthCode) ? $this->printData($rawResponseData->Transaction->AuthCode) : null,
-            'response' => isset($rawResponseData->Transaction->Response->Message) ? $this->printData($rawResponseData->Transaction->Response->Message) : null,
-            'auth_code' => isset($rawResponseData->Order->OrderHistInqResult->AuthCode) ? $this->printData($rawResponseData->Order->OrderHistInqResult->AuthCode) : null,
-            'host_ref_num' => isset($rawResponseData->Order->OrderHistInqResult->RetrefNum) ? $this->printData($rawResponseData->Order->OrderHistInqResult->RetrefNum) : null,
-            'ret_ref_num' => isset($rawResponseData->Order->OrderHistInqResult->RetrefNum) ? $this->printData($rawResponseData->Order->OrderHistInqResult->RetrefNum) : null,
-            'hash_data' => isset($rawResponseData->Transaction->HashData) ? $this->printData($rawResponseData->Transaction->HashData) : null,
-            'proc_return_code' => $this->getProcReturnCode(),
-            'code' => $this->getProcReturnCode(),
-            'status' => $status,
-            'status_detail' => $this->getStatusDetail(),
-            'error_code' => isset($rawResponseData->Transaction->Response->Code) ? $this->printData($rawResponseData->Transaction->Response->Code) : null,
-            'error_message' => isset($rawResponseData->Transaction->Response->ErrorMsg) ? $this->printData($rawResponseData->Transaction->Response->ErrorMsg) : null,
-            'extra' => $rawResponseData->Extra ?? null,
-            'order_txn' => $rawResponseData->Order->OrderHistInqResult->OrderTxnList->OrderTxn ?? [],
-            'all' => $rawResponseData,
-        ];
-    }
-
-    /**
      * @inheritDoc
      */
     protected function mapPaymentResponse($responseData)
@@ -917,6 +955,18 @@ class GarantiPos extends AbstractGateway
     }
 
     /**
+     * Amount Formatter
+     * converts 100 to 10000, or 10.01 to 1001
+     * @param double $amount
+     *
+     * @return int
+     */
+    public static function amountFormat($amount): int
+    {
+        return round($amount, 2) * 100;
+    }
+
+    /**
      * @inheritDoc
      */
     protected function preparePostPaymentOrder(array $order)
@@ -976,17 +1026,5 @@ class GarantiPos extends AbstractGateway
             'email' => $order['email'] ?? '',
             'installment' => '',
         ];
-    }
-
-    /**
-     * Amount Formatter
-     * converts 100 to 10000, or 10.01 to 1001
-     * @param double $amount
-     *
-     * @return int
-     */
-    public static function amountFormat($amount): int
-    {
-        return round($amount, 2) * 100;
     }
 }
