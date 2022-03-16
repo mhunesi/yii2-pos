@@ -119,7 +119,7 @@ class GarantiPos extends AbstractGateway
     {
         $request = Yii::$app->request;
 
-        if ($this->check3DHash($request->post()) && in_array((int)$request->post('mdstatus'), [1, 2, 3, 4], true)) {
+        if (in_array((int)$request->post('mdstatus'), [1, 2, 3, 4], true) && $this->check3DHash($request->post()) ) {
             $contents = $this->create3DPaymentXML($request->post());
             $this->send($contents);
         }
@@ -314,7 +314,7 @@ class GarantiPos extends AbstractGateway
                 $transactionSecurity = 'Half 3D Secure';
             }
 
-            if ($this->check3DHash($raw3DAuthResponseData) && $rawPaymentResponseData->Transaction->Response->ReasonCode === '00') {
+            if ($rawPaymentResponseData->Transaction->Response->ReasonCode === '00' && $this->check3DHash($raw3DAuthResponseData)) {
                 $response = 'Approved';
                 $procReturnCode = $rawPaymentResponseData->Transaction->Response->ReasonCode;
                 $status = 'approved';
@@ -407,9 +407,10 @@ class GarantiPos extends AbstractGateway
         $procReturnCode = $raw3DAuthResponseData['procreturncode'];
 
         $transactionSecurity = 'MPI fallback';
-        if ($this->check3DHash($raw3DAuthResponseData) && in_array((int)$raw3DAuthResponseData['mdstatus'],
-                [1, 2, 3, 4],
-                true) && $raw3DAuthResponseData['response'] !== $response) {
+        if (in_array((int)$raw3DAuthResponseData['mdstatus'], [1, 2, 3, 4], true) &&
+            $this->check3DHash($raw3DAuthResponseData) &&
+            $raw3DAuthResponseData['response'] !== $response)
+        {
             if ((int)$raw3DAuthResponseData['mdstatus'] === '1') {
                 $transactionSecurity = 'Full 3D Secure';
             } elseif (in_array($raw3DAuthResponseData['mdstatus'], [2, 3, 4])) {
